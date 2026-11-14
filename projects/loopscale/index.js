@@ -240,31 +240,22 @@ function getCollateralValuesForLoans(loans) {
   return mintBalances;
 }
 
-function getOutstandingBalanceForStrategy(strategy, currentTimestamp) {
-    // current_deployed_amount
-    // plus
-    // interest_outstanding
-    // plus
-    // interest_per_second
-    // times
-    // (current_timestamp - last_accrued_timestamp)
-    const lastAccruedTimestamp = bytesToBigIntLE(new Uint8Array(strategy.lastAccruedTimestamp[0]));
-    const interestPerSecond = bytesToBigIntLE(new Uint8Array(strategy.interestPerSecond[0])) / BigInt(1e18);
+// interest accrued since last_accrued_timestamp is not extrapolated: a corrupt interest_per_second
+// on one strategy (6tv6XYnX..., ~70M USDC/s) inflated borrowed to trillions
+function getOutstandingBalanceForStrategy(strategy) {
     const currentDeployedAmount = bytesToBigIntLE(new Uint8Array(strategy.currentDeployedAmount[0]));
     const outstandingInterestAmount = bytesToBigIntLE(new Uint8Array(strategy.outstandingInterestAmount[0]));
-    const unaccruedInterest = interestPerSecond * (BigInt(currentTimestamp) - lastAccruedTimestamp);
 
-    return currentDeployedAmount + outstandingInterestAmount + unaccruedInterest;
+    return currentDeployedAmount + outstandingInterestAmount;
 }
 
 function getOutstandingDebt(strategies) {
     const strategyBalances = {};
-    const currentTimestamp = Math.floor(Date.now() / 1000);
 
     for(let i = 0; i < strategies.length; i++) {
         const strategy = strategies[i].account;
         const mint = strategy.principalMint.toString();
-        const outstandingBalance = getOutstandingBalanceForStrategy(strategy, currentTimestamp);
+        const outstandingBalance = getOutstandingBalanceForStrategy(strategy);
         strategyBalances[mint] = strategyBalances[mint] ? strategyBalances[mint] + outstandingBalance : outstandingBalance;
     }
 
@@ -316,19 +307,45 @@ async function getDeposits(connection) {
         Object.entries(rawDeposits).filter(([key, value]) => value !== 0n)
     ));
     
-    const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            rawBalances: rawDeposits
-        })
-    });
+    return decompileMints(rawDeposits);
+}
 
-    const parsedDeposits = parseBigIntStringMap(await response.json());
+// the endpoint fails the whole request if a single mint can't be decompiled, so the mints it
+// names in the error are dropped from the request and reported as-is (raw mint, undecompiled)
+async function decompileMints(rawBalances) {
+    const pending = { ...rawBalances };
+    const passthrough = {};
 
-    return parsedDeposits;
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                rawBalances: pending
+            })
+        });
+        const data = await response.json();
+
+        if (response.ok && !data.error) {
+            const parsed = parseBigIntStringMap(data);
+            for (const [mint, balance] of Object.entries(passthrough))
+                parsed[mint] = (parsed[mint] || 0n) + BigInt(balance);
+            return parsed;
+        }
+
+        const failedMints = [...String(data.error).matchAll(/ratio\(([1-9A-HJ-NP-Za-km-z]+)\)/g)]
+            .map(m => m[1]).filter(mint => mint in pending);
+        if (!failedMints.length) throw new Error(`loopscale decompile_mints failed: ${data.error}`);
+
+        for (const mint of failedMints) {
+            passthrough[mint] = pending[mint];
+            delete pending[mint];
+        }
+    }
+
+    throw new Error('loopscale decompile_mints: still failing after dropping unpriceable mints');
 }
 
 async function tvl(api) {

@@ -23,13 +23,17 @@ const blacklists = {
   polygon: ['0x8d52c2d70a7c28a9daac2ff12ad9bfbf041cd318', '0x1f98431c8ad98523631ae4a59f267346ea31f984', '0xd5302a8ead77b85ea3326b45f4714e0b3432b233', '0xc951ab482ff11d8df636742e1f1c3fc8037427a9', '0xbF7970D56a150cD0b60BD08388A4A75a27777777'],
 }
 
+// the xlayer subgraph has no price for xStocks or xBTC, so their pools read $0 TVL there and the $100 filter drops them
+const noTvlFilterChains = ['xlayer']
+
 function v3TvlPaged(chain) {
   return async (api) => {
     const block = await api.getBlock()
+    const tvlFilter = noTvlFilterChains.includes(chain) ? '' : 'totalValueLockedUSD_gt: 100'
 
     let graphQueryPaged = `
     query poolQuery($lastId: String, $block: Int) {
-      pools(block: { number: $block } first:1000 where: {id_gt: $lastId totalValueLockedUSD_gt: 100}   subgraphError: allow) {
+      pools(block: { number: $block } first:1000 where: {id_gt: $lastId ${tvlFilter}}   subgraphError: allow) {
         id
         token0 { id }
         token1 { id }
@@ -85,6 +89,7 @@ const uniV3Config = {
   robinhood: { factory: '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA', fromBlock: 8930 },
   ink: { factory: '0x640887A9ba3A9C53Ed27D0F7e8246A4F933f3424', fromBlock: 284117 },
   arc: { factory: '0xf0db7b58379503491d857db50ac9ece64c653918', fromBlock: 1946500 },
+  elysium: { factory: '0x1707327F626496A7b5b3872e7E4d2879Df7d7a9f', fromBlock: 256055 },
 }
 
 Object.keys(uniV3Config).forEach(chain => {

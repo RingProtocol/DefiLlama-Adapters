@@ -1,11 +1,20 @@
 const { sumERC4626VaultsExport2 } = require('../projects/helper/erc4626')
 const { buildProtocolExports } = require('./utils')
 
-function erc4626ExportFn(chainConfigs) {
+// Chain config: an array of vault addresses, or { vaults, stakingVaults?, tokenAbi?, balanceAbi?, permitFailure? }.
+// Abis default to the OG 4626 asset()/totalAssets(); set tokenAbi/balanceAbi (per chain or in _options)
+// for vaults that expose them under other names. stakingVaults are summed the same way into the staking bucket.
+const chainExtraKeys = new Set(['vaults', 'stakingVaults', 'tvl', 'staking', 'pool2', 'borrowed', 'vesting'])
+
+function erc4626ExportFn(chainConfigs, options = {}) {
   const result = {}
   Object.entries(chainConfigs).forEach(([chain, config]) => {
-    const vaults = Array.isArray(config) ? config : config.vaults
-    result[chain] = { tvl: sumERC4626VaultsExport2({ vaults }) }
+    const { vaults = [], stakingVaults = [] } = Array.isArray(config) ? { vaults: config } : config
+    const opts = { ...options }
+    if (!Array.isArray(config))
+      for (const [k, v] of Object.entries(config)) if (!chainExtraKeys.has(k)) opts[k] = v
+    result[chain] = { tvl: vaults.length ? sumERC4626VaultsExport2({ vaults, ...opts }) : () => ({}) }
+    if (stakingVaults.length) result[chain].staking = sumERC4626VaultsExport2({ vaults: stakingVaults, ...opts })
   })
   return result
 }
@@ -135,6 +144,8 @@ const configs = {
   'paimon': { bsc: ['0x8505c32631034A7cE8800239c08547e0434EdaD9'], },
   'sova': { base: ['0xdFc4047620bd71F3dd781f1048f6890b76281D36'], },
   'altura': {
+    // vault has held no liquidity and paid no withdrawals since 2026-06-23; totalAssets() is an oracle NAV re-reported unchanged since then
+    deadFrom: '2026-06-24',
     hyperliquid: ['0xd0Ee0CF300DFB598270cd7F4D0c6E0D8F6e13f29'],
   },
   'lendle-vault-allocator': {
@@ -195,7 +206,8 @@ const configs = {
     doublecounted: true,
     ethereum: [
       '0xCa960E6DF1150100586c51382f619efCCcF72706',
-      '0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359',
+      '0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359', // yscvgCVX, retired (empty since Oct 2026)
+      '0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e', // ysCVX
     ],
   },
   'quell': {
@@ -259,17 +271,6 @@ const configs = {
   'yfarmer': {
     start: '2026-04-11',
     base: ['0x71c298a6eb10e7958ce25a450a706330a4c946c0']
-  },
-  'r25': {
-    pharos: Object.values({
-      vRPCWeeklyVault: '0x1c2bc8b553d9a7e61f7531a3a4bf2162f4569268',
-      vRPCQuarterlyVault: '0x94f7ebc6ae0819a4b4e231ae6ddaaf9bfd2a1a86',
-      vRPCSemiYearlyVault: '0xee26bb0989691735c997dfdc49a4a607f75e190b',
-      pCreditVault: '0x39976f3Ef143a5824d4E4c28c204d556113dCF7f',
-      apcVault: '0xd0428799fbc35557834d33121ba4472692c8908a',
-      hybVault: '0x6Ce4bc043398Ac40392d1E063328048072b2075d',
-    }),
-    methodology: "TVL represents the total value of assets held within the vault. Each vault token is minted using USDC and appreciates in line with the performance of the underlying asset.",
   },
   'visionboard-vault': {
     timetravel: false,
@@ -476,6 +477,15 @@ const configs = {
     doublecounted: true,
     base: ["0x9C2dCDbDB3F0A0F628D1112bBCABD9AE75353df3"]
   },
+  'setsuna': {
+    methodology: 'TVL is the totalAssets() of the setsUSDC and setsMON vaults: assets supplied to the underlying lending markets plus idle cash held for withdrawals. Those assets are also counted by the lending markets themselves, so the protocol is marked double counted.',
+    doublecounted: true,
+    start: '2026-10-11',
+    monad: [
+      '0x0a531817EEFB7b1FFD7c511c0817F58ac343CC67', // setsUSDC
+      '0x408A8C85a3e15446885ADCc954575e7a918dFd33', // setsMON (WMON)
+    ],
+  },
   'fija-finance': {
     start: '2023-10-02',
     doublecounted: true,
@@ -491,7 +501,7 @@ const configs = {
       '0x49A991e33B80d6c5F727242C778DbFeb606b6259',
     ],
     arbitrum: [
-      '0xea7aaf1713348be6f3556d4b94a44ddff20f9e4b',
+      // '0xea7aaf1713348be6f3556d4b94a44ddff20f9e4b',
       '0x3163a647ff4c819b6286d2dbc8405a124c93eba6',
       '0x645c2712fda24a41ed61064054429e00cb4293bb',
       '0x3b1ef6cca0672bb08df2c817b37dca22a69b005f',
@@ -527,7 +537,51 @@ const configs = {
     doublecounted: true,
     methodology: "Underlying assets in Otomate ERC-4626 vaults on Ink, measured with totalAssets net of accrued protocol fees. Assets are supplied to Tydro and already included in Tydro TVL.",
     ink: ['0x919C57BF59484798Ff2f90018640fd0A08242aC2', '0x2baA4C3f66Fa6f0c2d56242BaAE446a4De878B98', '0xcc7DcF43b17D8EdC437a6e33a6A325C57eba1ED7', '0x59046e5a0cbb5b64981b4668a31ab3a5ed0e7dd0']
-  }
+  },
+  'alphaprimer': {
+    doublecounted: true,
+    methodology: 'TVL is the USDC held by the AlphaPrimer vault, read via ERC-4626 totalAssets(). Deposits are supplied to Aave V3, Compound V3 or Fluid on Arbitrum, so they are also counted under those protocols.',
+    arbitrum: ['0x87Ef5c25203886b1026ad907E7f84fBAABdF1fa9'],
+  },
+  'ace-pro': {
+    start: '2026-09-29',
+    methodology: 'Counts LP assets reported by totalAssets() in the Ace.Pro V5 shared HYPE and USDC liquidity vaults on HyperEVM. Excludes round escrow, claimable payouts and protocol revenue held for the team and treasury, Lucky Draw prize pools and legacy vaults.',
+    hyperliquid: ['0xd39C426bd1a40b5cdB89B8CEb8464C4f78AbB29d', '0xf725Ac947c7B3EF790a3E68e2Ca2Fb48ce4023eD'],
+  },
+  'wstdiem': {
+    start: '2026-06-11',
+    doublecounted: true,
+    methodology: 'Counts DIEM in the wstDIEM vault via totalAssets(): idle DIEM plus DIEM the vault has staked on Venice or is unstaking, minus DIEM owed to queued redemptions.',
+    base: ['0xe49FA849cB37b0e7A42B2335e333fb99474167ba'],
+  },
+  'nexus-mutual-rwi-vault': {
+    start: '2026-03-16',
+    doublecounted: true,
+    methodology: 'Counts the USDC value of RWI Vault shares via totalAssets(), which accrues at the on-chain fixed yield rate. Deposits are deployed by the Vault Operator into tokenised onchain and offchain insurance opportunities. Assets are held as Pendle PT-reUSDe, so the same capital is also counted in Re and Pendle TVL.',
+    ethereum: ['0xcAFeAA466736ac01e0AC9Ca72644beF348694731'],
+    },
+  // --- custom-abi vaults (migrated 2026-10-22) ---
+  'deq': {
+    ethereum: { vaults: ['0x3742f3Fcc56B2d46c7B8CA77c23be60Cd43Ca80a'], tokenAbi: 'avail', balanceAbi: 'assets' },
+  },
+  'electrowizy': {
+    polygon: { vaults: ['0x663819aB31cB6204a2A732996549B702DeC38aa9'], tokenAbi: 'address:stakingToken', balanceAbi: 'uint256:totalStaked' },
+  },
+  'smiliee-gbera': {
+    berachain: { vaults: ['0x3f7755117f1fec1981aefb01887240dbf5f2ebce'], tokenAbi: 'wbera', balanceAbi: 'totalAssets' },
+  },
+  'sapien-vault': {
+    methodology: 'TVL is SAPIEN held by the Base ERC-4626 Sapien PoQ Vault, measured on-chain via totalAssets(). Protocol-owned SAPIEN in RewardsController is excluded.',
+    start: '2026-04-07',
+    base: { vaults: [], stakingVaults: ['0x60Bf63729f688287a450299962b36Cef0aFfaa42'] },
+  },
+  'hypertokens': {
+    methodology: 'TVL is the sum of ERC-4626 totalAssets() across the Ensemble iVOL and VOL vaults on HyperEVM, counted in their underlying USDC. Hyper Tokens (hypertokens.io) is the non-custodial front end for trading these ~6x leveraged BTC exposure tokens.',
+    hyperliquid: [
+      '0x59A72A4b8D632005112f7D2bc0D035E06bE043D9', // iVOL
+      '0xEb22eC1b402dcc4155B9D8d2E1db2f2d229162CC', // VOL
+    ],
+  },
 }
 
 module.exports = buildProtocolExports(configs, erc4626ExportFn)

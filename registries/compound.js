@@ -83,7 +83,7 @@ const configs = {
   },
   'capyfi': {
     lac: { comptroller: '0x123Abe3A273FDBCeC7fc0EBedc05AaeF4eE63060', cether: '0x465ebfceb3953e2922b686f2b4006173664d16ce' },
-    ethereum: { comptroller: '0x0b9af1fd73885aD52680A1aeAa7A3f17AC702afA', cether: '0x37DE57183491Fa9745d8Fa5DCd950f0c3a4645c9', blacklistedTokens: ['0xbaa6bc4e24686d710b9318b49b0bb16ec7c46bfa'] },
+    ethereum: { comptroller: '0x0b9af1fd73885aD52680A1aeAa7A3f17AC702afA', cether: '0x37DE57183491Fa9745d8Fa5DCd950f0c3a4645c9', blacklistedTokens: ['0xbaa6bc4e24686d710b9318b49b0bb16ec7c46bfa', '0xed025a9fe4b30bcd68460bca42583090c2266468'] },
     wc: { comptroller: '0x589d63300976759a0fc74ea6fA7D951f581252D7', cether: '0xaAd91abe333c4536FFbF02b83daBaB49C9Aa23ed' },
     base: { comptroller: '0x00dc4965916e03A734190fA382633657c71f867E', cether: '0x654A9003Cb09ab8050D4Fdba12F4c5d3C60A548e' },
   },
@@ -412,6 +412,7 @@ const configs = {
     hemi: { comptroller: '0xc2C583093Af9241E17B2Ec51844154468D21bF6F' },
   },
   'mare-finance-v2': {
+    deadFrom: '2026-09-30',
     methodology: 'Same as Compound Finance, we just count all the tokens supplied (not borrowed money) on the lending markets',
     kava: { comptroller: '0xFcD7D41D5cfF03C7f6D573c9732B0506C72f5C72', isInsolvent: true },
   },
@@ -471,7 +472,7 @@ const configs = {
     base: { comptroller: '0x1DB2466d9F5e10D7090E7152B68d62703a2245F0' },
   },
   'moonwell': {
-    hallmarks: [['2022-08-01', 'Nomad Bridge Exploit']],
+    hallmarks: [['2022-08-01', 'Nomad Bridge Exploit'], ['2026-08-27', 'MAMO oracle exploit on Base']],
     moonbeam: {
       comptroller: '0x8E00D5e02E65A19337Cdba98bbA9F84d4186a180',
       cether: '0x091608f4e4a15335145be0a279483c0f8e4c7955',
@@ -480,6 +481,8 @@ const configs = {
     base: {
       comptroller: '0xfBb21d0380beE3312B33c4353c8936a0F13EF26C',
       staking: ['0xe66E3A37C3274Ac24FE8590f7D84A2427194DC17', '0xa88594d404727625a9437c3f886c7643872296ae'],
+      // 2026-08-27 MAMO oracle exploiter, ~$9.5M of debt against worthless mMAMO collateral
+      excludedBorrowers: ['0x719eae70d4a83f35bf82a2740699f5db84be919d'],
     },
     optimism: { comptroller: '0xCa889f40aae37FFf165BccF69aeF1E82b5C511B9' },
     ethereum: { comptroller: '0xdec80bB934397575594E91970b37baf65f5b21bE' },
@@ -563,6 +566,30 @@ const configs = {
       { comptroller: '0xfFF8Fc176697D04607cF4e23E91c65aeD1c3d3F5', cether: ['0x530a8d3fdf61112f8a879d753fe02e9e37ec36aa'], isInsolvent: true },
     ],
   },
+  'shoebillFinance-v2': {
+    // manta, metis, fuse markets flagged insolvent (borrowed bucket emptied); zeta (aave v3) removed
+    klaytn: { comptroller: '0xEE3Db1711ef46C04c448Cb9F5A03E64e7aa22814', cether: '0xac6a4566d390a0da085c3d952fb031ab46715bcf' },
+    wemix: { comptroller: '0xBA5E3f89f57342D94333C682e159e68Ee1Fc64De', cether: '0xD42ad8346d14853EB3D30568B7415cF90C579D83' },
+    manta: [
+      { comptroller: '0x9f53Cd350c3aC49cE6CE673abff647E5fe79A3CC', cether: '0xE103F874B2D144C5B327FA3d57069Bb19c0779e2', isInsolvent: true },
+      { comptroller: '0x3413Dc597aE3bE40C6f10fC3D706b884eaCF470A', isInsolvent: true },
+      { comptroller: '0x4e4b415F5aa78a44CE1fc259D2cEc47BF50A9216', isInsolvent: true },
+    ],
+    mode: { comptroller: '0x9f53Cd350c3aC49cE6CE673abff647E5fe79A3CC', cether: '0xD13bE8b716b18265e294831FCb1330d170840BB3' },
+    metis: { comptroller: '0x9f53Cd350c3aC49cE6CE673abff647E5fe79A3CC', cether: '0x386adCa3c7D5C90523287933B05919aFcC2883dE', isInsolvent: true },
+    bsquared: [
+      { comptroller: '0x80E81348D9386Eb4d10c2A32A7458638cD3308dF', cether: '0x8dbf84c93727c85DB09478C83a8621e765D20eC2', isInsolvent: true },
+      { comptroller: '0x9f53Cd350c3aC49cE6CE673abff647E5fe79A3CC', isInsolvent: true },
+    ],
+    bob: [
+      { comptroller: '0x9f53Cd350c3aC49cE6CE673abff647E5fe79A3CC', cether: '0xb4255533Ad74A25A83d17154cB48A287E8f6A811', isInsolvent: true },
+      { comptroller: '0xB7ed6c062caAaCb1A13f317E0A751289280FC306', isInsolvent: true },
+      { comptroller: '0x1e514767F5cFe1ddE599dd39a79666E3BeEAaf7d', isInsolvent: true },
+    ],
+    kroma: { comptroller: '0x9f53Cd350c3aC49cE6CE673abff647E5fe79A3CC', cether: '0xD13bE8b716b18265e294831FCb1330d170840BB3' },
+    fuse: { comptroller: '0x9f53Cd350c3aC49cE6CE673abff647E5fe79A3CC', cether: '0xD13bE8b716b18265e294831FCb1330d170840BB3', isInsolvent: true },
+    zklink: { comptroller: '0x89e348e0ab4D83aEDbf1354004552822a805a12e', cether: '0x4dA697a89ea1D166881362b56E6863294820eC97' },
+  },
   'wanlend': {
     methodology,
     wan: [
@@ -600,7 +627,6 @@ const configs = {
       { comptroller: '0xB08A309eFBFFa41f36A06b2D0C9a4629749b17a2' },
       { comptroller: '0xBd82D36B9CDfB9747aA12025CeCE3782EDe767FE' },
       { comptroller: '0xF1ABd146B4620D2AE67F34EA39532367F73bbbd2' },
-      { comptroller: '0xBd82D36B9CDfB9747aA12025CeCE3782EDe767FE' },
       { comptroller: '0x59013D8a77D656777329D74ea1C88DA796005F1B' },
     ],
     arbitrum: [
@@ -622,6 +648,26 @@ const configs = {
   },
   'kyros-finance': {
     robinhood: [{ comptroller: '0x5f3Da5a8bCF26011e95CA2D03aFc6E0C54D4F0c9', cether: '0x73940Df7412C3c04aF3975BE26652B467BAE65A3' }],
+  },
+  'kinetixdao': {
+    methodology: 'TVL counts the underlying tokens (KKUB and USDT) held as cash by every market listed by the KINETIXDAO Comptroller on KUB Chain, i.e. supplied minus borrowed. Native KUB is wrapped to KKUB by the gateway before it is supplied, so it is counted as KKUB. Borrowed counts the totalBorrows of each market and is not included in TVL.',
+    start: '2026-10-08',
+    bitkub: [{comptroller: '0xc5DD9f1cE32f19C0a76a924F681914A8D10E8008'},]
+  },
+  'mimas-finance': {
+    // borrowed zeroed out (isInsolvent empties the borrowed bucket)
+    cronos: {
+      comptroller: '0xdD8c94211dD19155EFFbd57EAb6D4e0DE31A3b9E', cether: '0xff024211741059a2540b01f5Be2e75fC0c1b3d82', isInsolvent: true,
+      staking: ['0x268E2E1e5a465034Ee5742DA578feb41B228ad7B', '0x10C9284E6094b71D3CE4E38B8bFfc668199da677'],
+    },
+  },
+  'kilolend': {
+    methodology: 'This gets the total value locked in KiloLend',
+    bitkub: { comptroller: '0x42f098E6aE5e81f357D3fD6e104BAA77A195133A', cether: '0x0cA8DaD1e517a9BB760Ba0C27051C4C3A036eA75' },
+    klaytn: { comptroller: '0x2591d179a0B1dB1c804210E111035a3a13c95a48', cether: '0x2029f3E3C667EBd68b1D29dbd61dc383BdbB56e5' },
+  },
+  'aurumlend': {
+    arc: { comptroller: '0x966168Ecd30bf368acB7d18f1c64afEE34941233', }
   }
 }
 

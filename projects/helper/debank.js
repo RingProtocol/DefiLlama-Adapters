@@ -1,4 +1,5 @@
 const axios = require('axios')
+const { DEFAULT_TIMEOUT } = require('./http')
 const { getEnv } = require('./env')
 const { nullAddress } = require('./sumTokens')
 
@@ -17,6 +18,7 @@ const debankToLlamaChain = {
   frax: 'fraxtal',
   mnt: 'mantle',
   gno: 'xdai',
+  hood: 'robinhood',
 }
 
 function getLlamaChain(debankChain) {
@@ -35,11 +37,12 @@ async function _fetchDebank(endpoint, owners, { isAll = true } = {}) {
     const apiKey = getEnv('DEBANK_API_KEY')
     if (!apiKey) throw new Error('Missing DEBANK_API_KEY')
     const headers = { accept: 'application/json', AccessKey: apiKey }
-    _cache[key] = Promise.all(
+    const promise = Promise.all(
       owners.map(id =>
         axios.get(`${DEBANK_API_BASE}/${endpoint}`, {
           params: { id, is_all: isAll },
           headers,
+          timeout: DEFAULT_TIMEOUT,
         }).then(r => r.data).catch(e => {
           const status = e.response?.status
           const detail = e.response?.data?.message || e.message
@@ -47,6 +50,8 @@ async function _fetchDebank(endpoint, owners, { isAll = true } = {}) {
         })
       )
     )
+    _cache[key] = promise
+    promise.catch(() => { if (_cache[key] === promise) delete _cache[key] })
   }
   return _cache[key]
 }

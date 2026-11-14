@@ -16,6 +16,7 @@ const vaultConfigs = {
         '0xC56EA16EA06B0a6A7b3B03B2f48751e549bE40fD',
         '0x16fa314141C76D4a0675f5e8e3CCBE4E0fA22C7c'
       ],
+      excludedVaults: ['0xAbe418cc8c06D265E4EB009C02eA4B265eCA7240'], // Saturn USDC vault, counted under saturn-protocol
       euler: [
         '0x3cd3718f8f047aA32F775E2cb4245A164E1C99fB',
       ],
@@ -58,15 +59,18 @@ const vaultConfigs = {
         '0xC56EA16EA06B0a6A7b3B03B2f48751e549bE40fD',
         '0x9B97783B747c51b39c3d320050dc9C512868dAa8'
       ],
+      excludedVaults: ['0x75753e494e5e374C52E1d84fc04EB14B10F2C079'], // Saturn USDC vault, counted under saturn-protocol
       eulerVaultOwners: [
         '0x594c5eE5a326295FF6212C31BB3311747D3bD562',
       ],
       midasTokens: [
         '0xd90F6bFEd23fFDE40106FC4498DD2e9EDB95E4e7', // mHYPER
       ],
+      // aHyperBTC/aHYPER looping vaults excluded: their NAV is aHyperBTC/aHYPER shares already counted here
       accountableVaults: [
         '0xC6De1DC0B59682bE906E5BcA14E385E74EE88168', // Hyperithm Delta Neutral cbBTC (aHyperBTC)
         '0x7Cd231120a60F500887444a9bAF5e1BD753A5e59', // Hyperithm Delta Neutral USD (aHYPER)
+        '0x1a5b77cEf5e4B6F806aEac6f6eA9213a617dc7E3', // Saturn PT-USDat Loop Vault (aPTUSDat)
       ],
     },
     katana: {

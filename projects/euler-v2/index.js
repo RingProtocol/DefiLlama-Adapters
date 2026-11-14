@@ -31,7 +31,7 @@ async function fetchPriceMap(api, addresses) {
   const tokens = [...new Set(addresses.filter(Boolean).map(a => a.toLowerCase()))]
   if (!tokens.length) return {}
   const keys = tokens.map(t => `${api.chain}:${t}`)
-  const prices = await sdk.coins.getPrices(keys, 'now').catch(() => ({}))
+  const prices = await sdk.coins.getPrices(keys, 'now')
   const out = {}
   Object.entries(prices).forEach(([k, v]) => {
     if (!v || !v.price) return
@@ -44,7 +44,17 @@ async function fetchPriceMap(api, addresses) {
 Object.keys(config).forEach(chain => {
   const { factory, } = config[chain]
 
-  async function getVaults(api) {
+  const vaultCache = {}
+
+  // tvl and borrowed need the same vault list, fetch it once per run
+  function getVaults(api) {
+    if (!api.block && !api.timestamp) return _getVaults(api)
+    const key = `${api.block}-${api.timestamp}`
+    if (!vaultCache[key]) vaultCache[key] = _getVaults(api).catch(e => { delete vaultCache[key]; throw e })
+    return vaultCache[key]
+  }
+
+  async function _getVaults(api) {
     const vaults = await api.fetchList({ lengthAbi: 'getProxyListLength', itemAbi: 'proxyList', target: factory })
     const tokens = await api.multiCall({ abi: 'address:asset', calls: vaults })
     return { vaults, tokens }

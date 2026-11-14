@@ -19,6 +19,7 @@ const chainConfig = {
   unichain: { poolManager: '0x1F98400000000000000000000000000000000004', fromBlock: 1, stateView: '0x86e8631A016F9068C3f085fAF484Ee3F5fDee8f2' },
   monad: { poolManager: '0x188d586ddcf52439676ca21a244753fa19f9ea8e', fromBlock: 29255895, stateView: '0x77395f3b2e73ae90843717371294fa97cc419d64' },
   robinhood: { poolManager: '0x8366a39CC670B4001A1121B8F6A443A643e40951', fromBlock: 9070, stateView: '0xf3334192d15450cdd385c8b70e03f9a6bd9e673b' },
+  arc: { poolManager: '0x8366a39cc670b4001a1121b8f6a443a643e40951', fromBlock: 1946500, stateView: '0xF3334192D15450CdD385c8B70e03f9A6bD9E673b' },
 }
 
 const initializeAbi = 'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)'
@@ -91,10 +92,15 @@ async function getHookPools({ api, hook, poolManager, fromBlock }) {
 }
 
 // adds the reserves of the given v4 pools ([{ id, token0, token1, spacing }]) to api, reconstructed from
-// the pool's tick bitmap, tick liquidity and current price read via StateView (v4 keeps all pools in one PoolManager)
-async function addUniV4PoolReserves({ api, pools, stateView }) {
+// the pool's tick bitmap, tick liquidity and current price read via StateView (v4 keeps all pools in one PoolManager).
+// `abis` overrides the three view ABIs for a v4-shaped pool manager that names them differently, e.g. PancakeSwap
+// Infinity's CLPoolManager (getPoolBitmapInfo / getPoolTickInfo, same tick layout), passed in as `stateView`.
+async function addUniV4PoolReserves({ api, pools, stateView, abis = {} }) {
   if (!pools.length) return
-  const slot0s = await api.multiCall({ abi: getSlot0Abi, target: stateView, calls: pools.map((p) => p.id) })
+  const slot0Abi = abis.getSlot0 ?? getSlot0Abi
+  const bitmapAbi = abis.getTickBitmap ?? getTickBitmapAbi
+  const tickInfoAbi = abis.getTickInfo ?? getTickInfoAbi
+  const slot0s = await api.multiCall({ abi: slot0Abi, target: stateView, calls: pools.map((p) => p.id) })
   const live = []
   slot0s.forEach((s, i) => {
     const sqrtP = BigInt(s.sqrtPriceX96)
@@ -109,7 +115,7 @@ async function addUniV4PoolReserves({ api, pools, stateView }) {
     const hi = Math.floor(MAX_TICK / p.spacing) >> 8
     for (let w = lo; w <= hi; w++) words.push({ pool: i, word: w })
   })
-  const bitmaps = await api.multiCall({ abi: getTickBitmapAbi, target: stateView, calls: words.map(({ pool, word }) => ({ params: [live[pool].id, word] })) })
+  const bitmaps = await api.multiCall({ abi: bitmapAbi, target: stateView, calls: words.map(({ pool, word }) => ({ params: [live[pool].id, word] })) })
   bitmaps.forEach((raw, i) => {
     const bits = BigInt(raw)
     if (bits === 0n) return
@@ -125,7 +131,7 @@ async function addUniV4PoolReserves({ api, pools, stateView }) {
     p.ticks.forEach((tick) => tickCalls.push({ pool: i, tick }))
   })
   if (tickCalls.length) {
-    const tickData = await api.multiCall({ abi: getTickInfoAbi, target: stateView, calls: tickCalls.map(({ pool, tick }) => ({ params: [live[pool].id, tick] })) })
+    const tickData = await api.multiCall({ abi: tickInfoAbi, target: stateView, calls: tickCalls.map(({ pool, tick }) => ({ params: [live[pool].id, tick] })) })
     tickData.forEach((info, i) => {
       const { pool, tick } = tickCalls[i]
       live[pool].nets[tick] = BigInt(info.liquidityNet)

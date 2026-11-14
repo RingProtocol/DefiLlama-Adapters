@@ -4,6 +4,8 @@ const AAVE_POOLS = {
     WETH: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', // aEthWETH
     wstETH: '0x0B925eD163218f6662a35e0f0371Ac234f9E9371', // aEthWSTETH
     cbBTC: '0x5c647cE0Ae10658ec44FA4E11A51c96e94efd1Dd', // aEthcbBTC
+    WBTC: '0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8', // aEthWBTC
+    PYUSD: '0x0C0d01AbF3e6aDfcA0989eBbA9d6e85dD58EaB1E', // aEthPYUSD
   };
 const COMPOUND_POOLS = {
   USDC: '0xc3d688B66703497DAA19211EEdff47f25384cdc3', // cUSDCv3
@@ -58,6 +60,22 @@ const COMPOUND_POOLS = {
     'KPK USDC Prime': '0x4Ef53d2cAa51C447fdFEEedee8F07FD1962C9ee6',
     'Api3 dCOMP USDC': '0x36cfe1568461E499391ef0A555300F1ae2da2439',
     'Hyperithm USDC Apex': '0x777791C4d6DC2CE140D00D2828a7C93503c67777',
+    'Wintermute USDT Select': '0x500aE64100D7DbDb640531085C2F5d40cDC8930D',
+    'Gauntlet USDT Frontier': '0xE571B648569619566CF6ce1060C97B621CB635D3',
+    'Wintermute USDT Prime': '0xBf29043164660C60A2a72Cd15FFe2304e87B6838',
+    'Uniswap USDT': '0xb8274eFADB953FE9ae052D481a3FC5B6A3ceD703',
+    'PayPal USD Main': '0xb576765fB15505433aF24FEe2c0325895C559FB2',
+    'Sentora Huma PST Main': '0x8381a156958711E230f325428B5eb4b6555C75D9',
+    'Sentora mWIN Main': '0x7cBcfc4F64be199eDE6db1D916ddcdb69f666B57',
+    'Sentora PRIME Main': '0xC21b08C16458202593D4D9B26b9984Ee67b38BbD',
+    'Steakhouse Prime Instant PYUSD': '0xbeef00B5d83C1188F07A5184230a805639c39f04',
+    'Keyrock USDC V2': '0x04422053aDDbc9bB2759b248B574e3FCA76Bc145',
+    'KPK ETH Prime': '0xBb50A5341368751024ddf33385BA8cf61fE65FF9',
+    'Pendle Ecosystem USDC V2': '0x55C1B6e461a6334B567bAF0FEb5D728715446f05',
+    'KPK USDT Prime': '0x870F0BF29A25A40E7CC087cD5C53e70C11F2C8A8',
+    'UltraYield USDT Core': '0x85F3d81a39dF458E45d5EA20f9EB937fAafd282f',
+    'Kabu USDC': '0x54210d3f1A066413891AF9E17210E787d5C6e3f4',
+    'Huma USDC Main': '0x8aC91877b93330f52b2979a31a4879506021475c',
   };
 
   // Fluid (Ethereum mainnet)
@@ -87,6 +105,8 @@ const COMPOUND_POOLS = {
     'Euler Earn USDC': '0x3B4802FDb0E5d74aA37d58FD77d63e93d4f9A4AF',
     'Euler Prime WETH': '0xD8b27CF359b7D15710a5BE299AF6e7Bf904984C2',
     'K3 Capital Prime USDC': '0x797DD80692c3b2dAdabCe8e30C07fDE5307D48a9',
+    'K3 Capital Earn USDT': '0xb072b2779F1EF1A6A9D2d5fAa1766F341B92aB3a',
+    USDC: '0xe0a80d35bB6618CBA260120b279d357978c42BCE', // eUSDC-22
   };
   
   // Wasabi Protocol (Ethereum mainnet)
@@ -107,8 +127,16 @@ const COMPOUND_POOLS = {
     WETH: '0x3A43AEC53490CB9Fa922847385D82fe25d0E9De7',
   };
   
+  // Aave V4 spokes that coins.llama.fi already prices. Counted like every other receipt token.
+  const AAVE_V4_POOLS = {
+    'Core USDC': '0x531E90a2376902DE8915789Fcc1075e3B0c153E7',
+    'Core USDT': '0x5eC44a70F309854fe04d495cFE1B5dA63DD1cc73',
+    'Core USDG': '0xAC2435E3C25e8246870D33ce0a26988A46d5DB68',
+  };
+
   const allPoolTokens = [
     ...Object.values(AAVE_POOLS),
+    ...Object.values(AAVE_V4_POOLS),
     ...Object.values(COMPOUND_POOLS),
     ...Object.values(SPARK_POOLS),
     ...Object.values(ETHEREUM_MORPHO_POOLS),
@@ -121,8 +149,22 @@ const COMPOUND_POOLS = {
     ...Object.values(SUPERFORM_POOLS),
   ];
   
+  // ERC-4626 shares coins.llama.fi does not price. Same convertToAssets path as the other unpriced vaults.
+  const UNPRICED_VAULTS = [
+    '0x7320CF22Ac095bA2a2e0a652F77efB836c2E751b', // Aave V4 Core WETH
+    '0x6D9e2Cdd61CaF69af99b275704B6e272C41c6718', // Aave V4 Core EURC
+    '0xf72bd5a56de97840f1fdd3641b556126c10aa1c4', // Concrete WBTC
+  ];
+
+  // Morpho Blue market id. Not an ERC-20, so it stays out of allPoolTokens.
+  const MORPHO_BLUE_MARKETS = [
+    '0x6d95bf5fad1b0427205ee2b595f80b52e22394173de0832efa79fde88abb8525', // USDC/MORPHO
+  ];
+
   module.exports = {
     allPoolTokens,
+    unpricedVaults: UNPRICED_VAULTS,
+    morphoBlueMarkets: MORPHO_BLUE_MARKETS,
   };
   
   

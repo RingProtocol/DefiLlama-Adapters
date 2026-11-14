@@ -91,7 +91,19 @@ const getCompoundUsdcValues = async (
   });
 };
 
-const _getLogs = async (api, config) => {
+// tvl and staking both need the RToken creation logs: fetch them once per chain and run
+const rTokenLogs = {};
+const _getLogs = (api, config) => {
+  const key = `${api.chain}-${api.timestamp}`;
+  if (!rTokenLogs[key])
+    rTokenLogs[key] = _fetchLogs(api, config).catch((e) => {
+      delete rTokenLogs[key];
+      throw e;
+    });
+  return rTokenLogs[key];
+};
+
+const _fetchLogs = async (api, config) => {
   const resLog = (
     await Promise.all(
       config.deployerAddresses.map((deployerAddress) =>
@@ -170,14 +182,16 @@ const _getFolioLogs = async (api, folioDeployers) => {
         eventAbi: "event FolioDeployed(address indexed folioOwner, address indexed folio, address folioAdmin)",
         fromBlock: deployer.startBlock,
         onlyArgs: true,
-      }).catch(() => []),
+        extraKey: "folio-deployed",
+      }),
       getLogs({
         api,
         target: deployer.address,
         eventAbi: "event GovernedFolioDeployed(address indexed stToken, address indexed folio, address ownerGovernor, address ownerTimelock, address tradingGovernor, address tradingTimelock)",
         fromBlock: deployer.startBlock,
         onlyArgs: true,
-      }).catch(() => [])
+        extraKey: "governed-folio-deployed",
+      })
     ])
   );
 
@@ -214,7 +228,7 @@ const _getStakingTokenLogs = async (api, governanceDeployers) => {
         eventAbi: "event DeployedGovernedStakingToken(address indexed underlying, address indexed stToken, address governor, address timelock)",
         fromBlock: deployer.startBlock,
         onlyArgs: true,
-      }).catch(() => [])
+      })
     )
   );
   

@@ -8,6 +8,13 @@ const FETCH_OPTS = { headers: { 'User-Agent': 'DefiLlama-Adapter (alpend)' } }
 // genuinely dead feed (CCTools stopped polling), not a normal quiet period.
 const MAX_SOURCE_AGE_SECONDS = 24 * 60 * 60
 
+// CCTools aliases USDXLR's coingeckoId to usd-coin, which reports it as a USDC balance. coins
+// prices it as canton:USDXLR off the Excellar reserve gate, so key these on the Canton instrument
+// instead. Canton amounts are Daml Decimal (Numeric 10), so every instrument is scale 10 whatever
+// its origin chain used; this must match coins/src/adapters/other/excellarUsdxlr.ts.
+const CANTON_SCALE = 10
+const CANTON_PRICED = new Set(['USDXLR'])
+
 function validateFeed(feed, caller) {
   if (!feed || !Array.isArray(feed.pools) || feed.pools.length === 0)
     throw new Error(`alpend: CCTools feed returned no pools (${caller})`)
@@ -24,10 +31,16 @@ function validateFeed(feed, caller) {
 async function getPools(caller) {
   const feed = await get(TVL_URL, FETCH_OPTS)
   validateFeed(feed, caller)
-  for (const pool of feed.pools)
-    if (!pool.coingeckoId)
-      throw new Error(`alpend: no coingecko id for ${pool.asset}`)
-  return feed.pools
+  // Newly listed assets can appear before CCTools maps a coingecko id and before coins prices the
+  // instrument; skip them until one of the two can value them.
+  return feed.pools.filter(pool => pool.coingeckoId || CANTON_PRICED.has(pool.tokenId))
+}
+
+// addCGToken keys on the coingecko id and takes a scaled amount; a Canton instrument is keyed on
+// this chain and so wants base units.
+function addPool(api, pool, amount) {
+  if (CANTON_PRICED.has(pool.tokenId)) api.add(pool.tokenId, amount * 10 ** CANTON_SCALE)
+  else api.addCGToken(pool.coingeckoId, amount)
 }
 
 // Amounts are already decimal-adjusted; do not scale them again.
@@ -48,19 +61,19 @@ async function tvl(api) {
     const available = getAmount(pool, 'totalSupplied') - getAmount(pool, 'totalBorrowed')
     if (available < 0)
       throw new Error(`alpend: borrowed exceeds supplied for ${pool.asset}`)
-    api.addCGToken(pool.coingeckoId, available)
+    addPool(api, pool, available)
   }
 }
 
 async function borrowed(api) {
   for (const pool of await getPools('borrowed'))
-    api.addCGToken(pool.coingeckoId, getAmount(pool, 'totalBorrowed'))
+    addPool(api, pool, getAmount(pool, 'totalBorrowed'))
 }
 
 module.exports = {
   timetravel: false,
   methodology:
-    'Alpend is a lending protocol on the Canton Network. Users supply CC, USDCx, and CBTC as collateral to earn yield, ' +
+    'Alpend is a lending protocol on the Canton Network. Users supply assets to its lending pools as collateral to earn yield, ' +
     'and borrow against that collateral; interest accrues on-chain via reserve indices. ' +
     'TVL is the amount of each asset supplied to Alpend\'s lending pools minus the amount borrowed out of them, i.e. the assets held by the pool operator party; ' +
     'the borrowed tab is the gross amount currently borrowed out of those pools. ' +

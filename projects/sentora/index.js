@@ -1,4 +1,8 @@
+const ADDRESSES = require('../helper/coreAssets.json')
 const { getCuratorExport, getMorphoVaults } = require("../helper/curators");
+const { getConfig } = require('../helper/cache')
+const { getProvider, getTokenSupplies } = require('../helper/solana')
+const { Program } = require("@coral-xyz/anchor");
 
 const ethereumMorphoVaults = [
   '0xFC8C624B6080a0a780583799f2A862DE936F6E22', // Sentora x Spark RLUSD vault
@@ -43,6 +47,16 @@ const nestedMorphoHolders = [
   '0x264f0dd8f4183ea93b3c51b9f0e02375f88b8c2c',
 ]
 
+const ethereumBoringVaults = [
+  '0x9761ddf8e79930b334f1be1bd93abe3695061cca', // kraken earn vault
+  '0x7dee0120739b7ec048b469939efb178adbbb19b2', // kraken earnBTC vault
+  '0xdbd87325d7b1189dcc9255c4926076ff4a96a271', // boostedUSDC
+  '0xcaae49fb7f74ccfbe8a05e6104b01c097a78789f', // balancedUSDC
+  '0x13cc1b39cb259ba10cd174eae42012e698ed7c51', // lombard vault
+  '0x63d124cf1afc22f0ccea376168200508d2a0868e', // kraken beHolder
+  '0xf15351a0d66743e09457c45eae88df34fcee8cb7', // kraken beHolder ETH
+]
+
 const customConfig = {
   ethereum: {
     etherfi: [
@@ -54,14 +68,29 @@ const customConfig = {
       { vault: '0x3cc0d33b1aeac3d23ea89214b3ac5b4607032167', deployBlock: 23682851 }, // Upshift vault BTC
       { vault: '0xd0271e199f886ff943859579465498b18ecf1e9d', deployBlock: 24241435 }, // Upshift vault ETH
       { vault: '0xd000E6BcAd5457E8F4de67eDdeFe50BCC4B3d743', deployBlock: 25279501 }, // Upshift Sentora RWA (PYUSD)
-    ]
-  }
+      { vault: '0xe7Ea85080426e69388AC444b72B6c4c5409d29FC', deployBlock: 26041853 }, // Upshift USD Earn with Uphold (RLUSD)
+    ],
+    supervisedLoans: [
+      '0xc936e848688c9f035fa0e7a0e4dbcf26a01245f3', // Loan Manager (Position Manager 0xc1d4e31c05457f7a87f49e0ef556977e9e216250)
+    ],
+  },
+  solana: {
+    // Earn side of the Sentora-curated market on the JupLend Ethena deployment
+    juplend: [
+      { fToken: '7T1qPZUPdaEhfQ6tXLvFeCoehyDfzdk76XbszbXyqgjx', mint: ADDRESSES.solana.PYUSD }, // jlePYUSD -> PYUSD
+    ],
+  },
 }
+
+const JUPLEND_LIQUIDITY_IDL_URL = 'https://raw.githubusercontent.com/jup-ag/jupiter-lend/refs/heads/main/target/idl/liquidity.json'
+const JUPLEND_ETHENA_LIQUIDITY_PROGRAM = 'jup6QF1sNDGpkkcu6F4qaFHcRBmnSS1VgyB4uFbBvNS'
+const JUPLEND_EXCHANGE_PRICE_PRECISION = 1e12
 
 const abis = {
   balanceOf: 'function balanceOf(address _asset_address, address _account) view returns (uint256)',
   getPositionAssets: 'function getPositionAssets() view returns (address[])',
   positionConfig: 'function positionConfig() view returns (address rtoken, address basket_handler, address asset_registry, address furnace)',
+  getMarketParams: 'function getMarketParams() view returns (address loanToken, address collateralToken, address oracle, address irm, uint256 lltv)',
 }
 
 const curatorExport = getCuratorExport({
@@ -74,14 +103,9 @@ const curatorExport = getCuratorExport({
       ],
       morpho: ethereumMorphoVaults,
       morphoVaultOwners: ethereumMorphoVaultOwners,
-      boringVaults: [
-        '0x9761ddf8e79930b334f1be1bd93abe3695061cca', // kraken earn vault
-        '0x7dee0120739b7ec048b469939efb178adbbb19b2', // kraken earnBTC vault
-        '0xdbd87325d7b1189dcc9255c4926076ff4a96a271', // boostedUSDC
-        '0xcaae49fb7f74ccfbe8a05e6104b01c097a78789f', // balancedUSDC
-        '0x13cc1b39cb259ba10cd174eae42012e698ed7c51', // lombard vault
-        '0x63d124cf1afc22f0ccea376168200508d2a0868e', // kraken beHolder
-        '0xf15351a0d66743e09457c45eae88df34fcee8cb7', // kraken beHolder ETH
+      boringVaults: ethereumBoringVaults,
+      aaveV4Hubs: [
+        '0xD138FcB0E8C52fDbB2Ac4573FA4d8925cf11e9c2', // Sentora hub
       ],
     },
     ink: {
@@ -121,7 +145,25 @@ const handlers = {
     const calls = vaults.filter(v => block >= v.deployBlock).map(v => v.vault)
     if (!calls.length) return
     await api.erc4626Sum({ calls, tokenAbi: 'address:asset', balanceAbi: 'uint256:getTotalAssets' });
-  }
+  },
+
+  async supervisedLoans(api, loanManagers) {
+    const params = await api.multiCall({ calls: loanManagers, abi: abis.getMarketParams })
+    const supplied = await api.multiCall({ calls: loanManagers, abi: 'uint256:getSupply' })
+    api.add(params.map(p => p.collateralToken), supplied)
+  },
+
+  async juplend(api, markets) {
+    const idl = await getConfig('jupiter-lend', JUPLEND_LIQUIDITY_IDL_URL)
+    const program = new Program({ ...idl, address: JUPLEND_ETHENA_LIQUIDITY_PROGRAM }, getProvider())
+    const reserves = (await program.account.tokenReserve.all()).map(i => i.account)
+    const supplies = await getTokenSupplies(markets.map(m => m.fToken))
+    markets.forEach(({ fToken, mint }) => {
+      const reserve = reserves.find(r => r.mint.toBase58() === mint)
+      if (!reserve || supplies[fToken] === undefined) throw new Error(`juplend: missing data for ${mint}`)
+      api.add(mint, +supplies[fToken] * +reserve.supplyExchangePrice.toString() / JUPLEND_EXCHANGE_PRICE_PRECISION)
+    })
+  },
 }
 
 async function customTvl(api) {
@@ -145,6 +187,28 @@ async function subtractNestedMorphoShares(api) {
   api.add(assets, amounts.map(a => -a))
 }
 
+// The Veda vaults also hold shares of Sentora's own Upshift vaults (Advanced Strategies USDC holds sentUSD,
+// the Upshift USD share token). Those shares sit in the Veda vault's NAV and in the Upshift vault's
+// getTotalAssets(), so they are subtracted from the Upshift side, valued at the Upshift share price.
+async function subtractNestedUpshiftShares(api) {
+  const block = await api.getBlock()
+  const vaults = customConfig.ethereum.upshift.filter(v => block >= v.deployBlock).map(v => v.vault)
+  if (!vaults.length) return
+  const holders = [...new Set([...ethereumBoringVaults, ...nestedMorphoHolders].map(a => a.toLowerCase()))]
+  const [lpTokens, assets, totalAssets] = await Promise.all([
+    api.multiCall({ abi: 'address:lpTokenAddress', calls: vaults }),
+    api.multiCall({ abi: 'address:asset', calls: vaults }),
+    api.multiCall({ abi: 'uint256:getTotalAssets', calls: vaults }),
+  ])
+  const supplies = await api.multiCall({ abi: 'erc20:totalSupply', calls: lpTokens })
+  const pairs = vaults.flatMap((_, i) => holders.map(holder => ({ i, holder })))
+  const shares = await api.multiCall({ abi: 'erc20:balanceOf', calls: pairs.map(({ i, holder }) => ({ target: lpTokens[i], params: [holder] })) })
+  pairs.forEach(({ i }, k) => {
+    if (BigInt(shares[k]) === 0n || BigInt(supplies[i]) === 0n) return
+    api.add(assets[i], -(BigInt(shares[k]) * BigInt(totalAssets[i]) / BigInt(supplies[i])))
+  })
+}
+
 module.exports = { timetravel: false, ...curatorExport }
 
 for (const chain of Object.keys(customConfig)) {
@@ -154,7 +218,10 @@ for (const chain of Object.keys(customConfig)) {
     tvl: async (api) => {
       if (curatorChain?.tvl) await curatorChain.tvl(api)
       await customTvl(api)
-      if (chain === 'ethereum') await subtractNestedMorphoShares(api)
+      if (chain === 'ethereum') {
+        await subtractNestedMorphoShares(api)
+        await subtractNestedUpshiftShares(api)
+      }
     },
   }
 }

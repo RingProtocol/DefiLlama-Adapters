@@ -12,7 +12,7 @@ const uniV3ABI = require('./abis/uniV3.json');
 const slipstreamNftABI = require('../arcadia-finance-v2/slipstreamNftABI.json');
 const { covalentGetTokens, } = require("./token");
 const SOLIDLY_VE_NFT_ABI = require('./abis/solidlyVeNft.json');
-const { tickToPrice } = require('./utils/tick');
+const { tickToPrice, getSqrtPriceX96AtTick } = require('./utils/tick');
 const { queryAllium } = require('./allium');
 const { cachedGraphQuery } = require('./cache');
 
@@ -288,8 +288,9 @@ async function unwrapUniswapV4NFT({ balances, nftAddress, stateViewer, api, blac
     const bottomTick = +position.tickLower
     const topTick = +position.tickUpper
     const sp = lpInfo[getKey(position)].sqrtPrice
-    const sa = tickToPrice(bottomTick / 2)
-    const sb = tickToPrice(topTick / 2)
+    // exact edges: 1.0001 ** (tick / 2) drifts ~1e-12 from TickMath, which misvalues positions priced at an edge
+    const sa = Number(getSqrtPriceX96AtTick(bottomTick)) / 2 ** 96
+    const sb = Number(getSqrtPriceX96AtTick(topTick)) / 2 ** 96
 
     let amount0 = 0
     let amount1 = 0
@@ -562,7 +563,36 @@ async function unwrapSlipstreamV3NFTs({ balances, nftsAndOwners = [], api, owner
   return balances
 }
 
-async function getPositionIdsByNftAddress({ api, nftsAndOwners, }) {
+// Aero (MetaDEX) CL NonfungiblePositionManager ("AERO-CL"), same address on every chain it is deployed on.
+// Its positions(), the CLFactory's getPool(token0, token1, int24 tickSpacing) and the pool's slot0() share the
+// Slipstream layout, so unwrapSlipstreamNFT resolves its positions.
+const metadexCLNFTs = {
+  base: '0x4857DB576eE0e45F10525eC59527BfD10beeC60b',
+  optimism: '0x4857DB576eE0e45F10525eC59527BfD10beeC60b',
+  robinhood: '0x4857DB576eE0e45F10525eC59527BfD10beeC60b',
+}
+
+async function unwrapMetadexCLNFTs({ balances, nftsAndOwners = [], api, owner, nftAddress, owners, blacklistedTokens = [], whitelistedTokens = [], uniV3ExtraConfig = {} }) {
+  const chain = api.chain
+  if (!nftsAndOwners.length) {
+    if (!nftAddress) nftAddress = metadexCLNFTs[chain]
+    // no MetadexCL deployment on this chain, so there is nothing to resolve
+    if (!nftAddress) return balances
+
+    if ((!owners || !owners.length) && owner)
+      owners = [owner]
+    owners = getUniqueAddresses(owners, chain)
+    nftsAndOwners = owners.map(o => [nftAddress, o])
+  }
+  // before the position manager is deployed (historical runs) balanceOf has no code to call; count that as no positions
+  const positionIdsByNftAddress = await getPositionIdsByNftAddress({ api, nftsAndOwners, permitFailure: true, })
+  for (const [nftAddress, positionIds] of Object.entries(positionIdsByNftAddress)) {
+    await unwrapSlipstreamNFT({ balances, positionIds, nftAddress, api, blacklistedTokens, whitelistedTokens, uniV3ExtraConfig, })
+  }
+  return balances
+}
+
+async function getPositionIdsByNftAddress({ api, nftsAndOwners, permitFailure = false, }) {
   const ownersByNFT = {}
   nftsAndOwners.forEach(([nftAddress, owner]) => {
     nftAddress = normalizeAddress(nftAddress, api.chain)
@@ -573,7 +603,7 @@ async function getPositionIdsByNftAddress({ api, nftsAndOwners, }) {
   const positionIdsByNftAddress = {}
   for (let [nftAddress, owners] of Object.entries(ownersByNFT)) {
     owners = Array.from(owners)
-    const positionIdBalances = await api.multiCall({ abi: 'erc20:balanceOf', target: nftAddress, calls: owners })
+    const positionIdBalances = await api.multiCall({ abi: 'erc20:balanceOf', target: nftAddress, calls: owners, permitFailure })
     const positionIdCalls = []
     positionIdBalances.forEach((idCount, i) => {
       const count = +idCount
@@ -603,6 +633,17 @@ async function unwrapSlipstreamNFT({ api, balances, owner, positionIds = [], nft
   whitelistedTokens = getUniqueAddresses(whitelistedTokens, chain)
   let nftIdFetcher = uniV3ExtraConfig.nftIdFetcher ?? nftAddress
 
+  if ((!positionIds || positionIds.length === 0) && owner) {  // if positionIds are not provided and owner address is passed
+    const nftPositions = await api.call({ target: nftIdFetcher, params: owner, abi: 'erc20:balanceOf' })
+    positionIds = (await api.multiCall({
+      abi: uniV3ABI.tokenOfOwnerByIndex, target: nftIdFetcher,
+      calls: Array(Number(nftPositions)).fill(0).map((_, index) => ({ params: [owner, index] })),
+    }))
+  }
+
+  // nothing to value, so the position manager and its factory are never called
+  if (!positionIds?.length) return balances
+
   let factory
   if (isShadow) {
     const deployer = await api.call({ target: nftAddress, abi: 'address:deployer' })
@@ -611,14 +652,6 @@ async function unwrapSlipstreamNFT({ api, balances, owner, positionIds = [], nft
     const factoryKey = getFactoryKey(chain, nftAddress)
     if (!factories[factoryKey]) factories[factoryKey] = api.call({ target: nftAddress, abi: uniV3ABI.factory, })
     factory = (await factories[factoryKey])
-  }
-
-  if ((!positionIds || positionIds.length === 0) && owner) {  // if positionIds are not provided and owner address is passed
-    const nftPositions = await api.call({ target: nftIdFetcher, params: owner, abi: 'erc20:balanceOf' })
-    positionIds = (await api.multiCall({
-      abi: uniV3ABI.tokenOfOwnerByIndex, target: nftIdFetcher,
-      calls: Array(Number(nftPositions)).fill(0).map((_, index) => ({ params: [owner, index] })),
-    }))
   }
 
   const positionsAbi = isShadow ? shadowV3PositionsABI : slipstreamNftABI.positions
@@ -689,9 +722,11 @@ const gasTokenSet = new Set(gasTokens)
 // ERC-20 views of the native coin: balanceOf returns the same number as eth_getBalance, so they are
 // read as the native balance and deduped per owner, otherwise listing both counts the coin twice
 const nativeTokenAliases = {
-  polygon: '0x0000000000000000000000000000000000001010', // POL (MRC20)
-  celo: '0x471ece3750da237f93b8e339c536989b8978a438', // CELO (GoldToken)
-  metis: '0xdeaddeaddeaddeaddeaddeaddeaddeaddead0000', // METIS
+  polygon: ADDRESSES.polygon.WMATIC_1, // POL (MRC20)
+  celo: ADDRESSES.celo.CELO, // CELO (GoldToken)
+  metis: ADDRESSES.metis.Metis, // METIS
+  arc: ADDRESSES.arc.USDC, // USDC (6 decimals, native is 18)
+  stable: ADDRESSES.xlayer.USDT0, // USDT0 (6 decimals, native is 18)
 }
 /*
 tokensAndOwners [
@@ -970,6 +1005,7 @@ async function sumTokens2({
   resolveSlipstream = false,
   resolveSlipstreamV2 = false,
   resolveSlipstreamV3 = false,
+  resolveMetadexCL = false,
   resolveStakewiseDeposits = false,
   uniV3WhitelistedTokens = [],
   uniV3nftsAndOwners = [],
@@ -1126,6 +1162,9 @@ group by
   if (resolveSlipstreamV3)
     await unwrapSlipstreamV3NFTs({ balances, api, owner, owners, blacklistedTokens, whitelistedTokens: uniV3WhitelistedTokens, nftsAndOwners: uniV3nftsAndOwners, uniV3ExtraConfig, })
 
+  if (resolveMetadexCL)
+    await unwrapMetadexCLNFTs({ balances, api, owner, owners, blacklistedTokens, whitelistedTokens: uniV3WhitelistedTokens, nftsAndOwners: uniV3nftsAndOwners, uniV3ExtraConfig, })
+
   blacklistedTokens = blacklistedTokens.map(t => normalizeAddress(t, chain))
   tokensAndOwners = tokensAndOwners.map(([t, o]) => [normalizeAddress(t, chain), o]).filter(([token]) => !blacklistedTokens.includes(token))
   tokensAndOwners = getUniqueToA(tokensAndOwners)
@@ -1259,7 +1298,7 @@ async function unwrapBalancerToken({ api, chain, block, balancerToken, owner, ba
 
     const underlyingTokens = await api.call({ target: underlyingPool, abi: getCurrentTokens, })
 
-    const tempBalances = await sumTokens2({ owner: underlyingPool, tokens: underlyingTokens, api, })
+    const tempBalances = await sumTokens2({ owner: underlyingPool, tokens: underlyingTokens, api, balances: {}, })
     for (const [token, value] of Object.entries(tempBalances)) {
       const newValue = BigNumber(value * ratio).toFixed(0)
       sdk.util.sumSingleBalance(balances, token, newValue)
@@ -1403,6 +1442,7 @@ module.exports = {
   unwrapDolomiteDeposits,
   unwrapUniswapLPs,
   unwrapSlipstreamNFT,
+  unwrapMetadexCLNFTs,
   unwrapUniswapV3NFT,
   sumTokens,
   genericUnwrapCvx,

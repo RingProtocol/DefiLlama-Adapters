@@ -1,6 +1,10 @@
-const { allPoolTokens: baseTokens } = require('./base');
+const { allPoolTokens: baseTokens, unpricedVaults: baseUnpricedVaults, makinaPairs, morphoBlueMarkets: baseBlueMarkets } = require('./base');
 const { getConfig } = require('../helper/cache');
-const { allPoolTokens: ethereumPoolTokens } = require('./ethereum');
+const { toAssetsDown } = require('../helper/morpoho');
+const morphoAbi = require('../helper/abis/morpho.json').morphoBlueFunctions;
+const { allPoolTokens: ethereumPoolTokens, unpricedVaults: ethereumUnpricedVaults, morphoBlueMarkets: ethereumBlueMarkets } = require('./ethereum');
+
+const MORPHO = '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb';
 
 // --- inlined from ./helpers ---
 const SILO_POOL_ADDRESSES = {
@@ -119,6 +123,8 @@ const ARBITRUM_MORPHO_POOLS = {
     'Yearn Degen': '0x36b69949d60d06ECcC14DE0Ae63f4E00cc2cd8B9',
     'Steakhouse High Yield USDT': '0xbeeff77CE5C059445714E6A3490E273fE7F2492F',
     'KPK USDC Yield' : '0x5837e4189819637853a357aF36650902347F5e73',
+    'Steakhouse USDG Pro': '0xbeeFf72B77e7584a450E887125F25E8D8819016a',
+    'Gauntlet USDG Premium': '0x390c1bb01F3F627144a40617e287d4cE3D5aBCfa',
 };
 const ARBITRUM_SPARK_POOLS = {
     USDC: '0x940098b108fB7D0a7E374f6eDED7760787464609',
@@ -148,6 +154,9 @@ const ARBITRUM_DOLOMITE_POOLS = {
     'USDC': '0x444868B6e8079ac2c55eea115250f92C2b2c4D14',
     'WETH': '0xf7b5127B510E568fdC39e6Bb54e2081BFaD489AF',
 };
+const ARBITRUM_AUTOFINANCE_POOLS = {
+    USDC: '0xf63b7F49B4f5Dc5D0e7e583Cfd79DC64E646320c', // arbUSD
+};
 const arbitrumPoolTokens = [
     ...Object.values(COMPOUND_POOLS),
     ...Object.values(ARBITRUM_AAVE_POOLS),
@@ -158,6 +167,7 @@ const arbitrumPoolTokens = [
     ...Object.values(ARBITRUM_EULER_POOLS),
     ...Object.values(ARBITRUM_HARVEST_POOLS),
     ...Object.values(ARBITRUM_DOLOMITE_POOLS),
+    ...Object.values(ARBITRUM_AUTOFINANCE_POOLS),
 ]
 
 // --- inlined from ./plasma ---
@@ -191,6 +201,80 @@ const TOKENS = {
   sonic: sonicTokens,
 };
 
+// Llama drops these share tokens (no coins.llama.fi price). convertToAssets into the underlying, which is priced.
+async function unpricedVaultsTvl(api, owners, vaults) {
+    const assets = await api.multiCall({ abi: 'address:asset', calls: vaults });
+    const vaultAsset = {};
+    vaults.forEach((vault, i) => { if (assets[i]) vaultAsset[vault.toLowerCase()] = assets[i]; });
+    const okVaults = Object.keys(vaultAsset);
+    if (!okVaults.length) return;
+
+    const calls = owners.flatMap(owner => okVaults.map(vault => ({ target: vault, params: [owner] })));
+    const balances = await api.multiCall({ abi: 'erc20:balanceOf', calls });
+
+    const convertCalls = [];
+    const convertAssets = [];
+    balances.forEach((balance, i) => {
+        if (!balance || balance === '0') return;
+        convertCalls.push({ target: calls[i].target, params: [balance] });
+        convertAssets.push(vaultAsset[calls[i].target.toLowerCase()]);
+    });
+    if (!convertCalls.length) return;
+
+    const amounts = await api.multiCall({
+        abi: 'function convertToAssets(uint256) view returns (uint256)',
+        calls: convertCalls,
+    });
+    amounts.forEach((amount, i) => { if (amount) api.add(convertAssets[i], amount); });
+}
+
+// projects/makina-finance values a share balance with these two calls. lastTotalAum() is the whole
+// machine, so it is not used here: Zyfai only holds the share token. Llama prices the accounting token.
+const makinaAbi = {
+    accountingToken: 'address:accountingToken',
+    convertToAssets: 'function convertToAssets(uint256 shares) view returns (uint256)',
+};
+
+async function makinaSharesTvl(api, owners, pairs) {
+    if (!owners.length || !pairs.length) return;
+    const accountings = await api.multiCall({
+        abi: makinaAbi.accountingToken,
+        calls: pairs.map((pair) => pair.machine),
+    });
+    const calls = owners.flatMap((owner) => pairs.map((pair) => ({ target: pair.share, params: [owner] })));
+    const balances = await api.multiCall({ abi: 'erc20:balanceOf', calls });
+    const held = [];
+    balances.forEach((shares, i) => {
+        if (!shares || BigInt(shares) === 0n) return;
+        const pairIndex = i % pairs.length;
+        held.push({ machine: pairs[pairIndex].machine, accountingToken: accountings[pairIndex], shares });
+    });
+    if (!held.length) return;
+    const amounts = await api.multiCall({
+        abi: makinaAbi.convertToAssets,
+        calls: held.map(({ machine, shares }) => ({ target: machine, params: [shares] })),
+    });
+    held.forEach(({ accountingToken }, i) => { if (amounts[i] && amounts[i] !== '0') api.add(accountingToken, amounts[i]); });
+}
+
+// Morpho Blue supply is not an ERC-20: convert supply shares with the market totals and add the
+// loan token. Market ids stay out of allPoolTokens.
+async function morphoBlueSupplyTvl(api, owners, marketIds) {
+    if (!owners.length || !marketIds.length) return;
+    const params = await api.multiCall({ target: MORPHO, abi: morphoAbi.idToMarketParams, calls: marketIds });
+    const markets = await api.multiCall({ target: MORPHO, abi: morphoAbi.market, calls: marketIds });
+    const positions = await api.multiCall({
+        target: MORPHO,
+        abi: morphoAbi.position,
+        calls: owners.flatMap((owner) => marketIds.map((id) => ({ params: [id, owner] }))),
+    });
+    positions.forEach((position, i) => {
+        const m = i % marketIds.length;
+        const assets = toAssetsDown(position.supplyShares, markets[m].totalSupplyAssets, markets[m].totalSupplyShares);
+        api.add(params[m].loanToken, assets.toString());
+    });
+}
+
 async function tvl(api) {
     const owners = await getConfig('zyfai/'+api.chain, `https://api.zyf.ai/api/v1/data/active-wallets?chainId=${api.chainId}`);
     const cleanOwners = owners.filter(o => o !== '');
@@ -202,11 +286,23 @@ async function tvl(api) {
         ]);
     }
 
+    if (api.chain === 'base') {
+        await unpricedVaultsTvl(api, cleanOwners, baseUnpricedVaults);
+        await makinaSharesTvl(api, cleanOwners, makinaPairs);
+        await morphoBlueSupplyTvl(api, cleanOwners, baseBlueMarkets);
+    }
+
+    if (api.chain === 'ethereum') {
+        await unpricedVaultsTvl(api, cleanOwners, ethereumUnpricedVaults);
+        await morphoBlueSupplyTvl(api, cleanOwners, ethereumBlueMarkets);
+    }
+
     return api.sumTokens({ownerTokens: cleanOwners.map(o => [TOKENS[api.chain], o])});
 }
 
 module.exports = {
-    methodology: 'Counts the TVL of all smart wallet accounts deployed by ZyFAI protocol across multiple DeFi protocols',
+    doublecounted: true,
+    methodology: 'Counts the TVL of all smart wallet accounts deployed by ZyFAI protocol across multiple DeFi protocols. Receipt tokens that Llama prices are summed directly, including priced Aave V4 spokes. Shares Llama does not price use the existing convertToAssets path. Makina share balances use the makina-finance valuation: convertToAssets on the Machine into the accounting token. Morpho Blue supply shares are converted with the market totals and added as the loan token.',
     sonic: { tvl },
     base: { tvl },
     arbitrum: { tvl },

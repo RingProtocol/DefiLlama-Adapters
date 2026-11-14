@@ -84,6 +84,19 @@ module.exports = {
       "fetchCoValentTokens": true
     },
   },
+  "blast-bridge": {
+    "hallmarks": [
+      ['2026-10-02', 'Blast L2 shutdown announced, bridge withdrawals until Oct 26'],
+    ],
+    "ethereum": {
+      "owners": [
+        "0xa230285d5683C74935aD14c446e137c8c8828438",
+        "0x98078db053902644191f93988341E31289E1C8FE",
+        "0x5F6AE08B8AeB7078cf2F96AFb089D7c9f51DA47d"
+      ],
+      "fetchCoValentTokens": true
+    },
+  },
   "blackwing": {
     "arbitrum": {
       "tokens": [
@@ -415,6 +428,18 @@ module.exports = {
       "blacklistedTokens": [
         "0xeb964a1a6fab73b8c72a0d15c7337fa4804f484d"
       ]
+    },
+  },
+  "horizen-bridge": {
+    // Horizen is an OP Stack L3 (Caldera) settling to Base. https://docs.horizen.io/horizen-chain/bridging/how-bridging-works
+    "methodology": "Counts assets escrowed on Base for Horizen's canonical bridge: ETH in the OptimismPortal and ERC-20s in the L1StandardBridge. ZEN, USDC and cbBTC reach Horizen through Stargate and are not included.",
+    "start": "2025-11-17", // first deposit through the OptimismPortal
+    "base": {
+      "owners": [
+        "0xf4a6cc4171fda694439f856d912777aa6ab05369", // L1StandardBridge
+        "0x78e794d10a355468A0e7A14AA1a9F9A253D78784"  // OptimismPortal2, L1StandardBridge.messenger().portal()
+      ],
+      "fetchCoValentTokens": true
     },
   },
   "immutable-zkevm": {

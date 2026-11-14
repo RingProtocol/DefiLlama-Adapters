@@ -43,14 +43,11 @@ const suiVaultsToInclude = [
   "0x30844745c8197fdaf9fe06c4ffeb73fe05c092ce0040674a3758dbfcb032a1f4",
 ];
 
-// Stellar (Soroban) vaults — August/Gami tokenized vaults (OZ FungibleVault).
-// total_assets() = idle balance + strategy balances + deployed capital; and
-// query_asset() returns the underlying token's Soroban contract address, which
-// DefiLlama prices directly (the USDC/XLM SACs are already in coreAssets).
-const stellarVaultsToInclude = [
-  "CCL3WITWFFXIHV2I52ECV5DPIEOFSTU3PBPR53ILPLF2IP5KHECXRUTY", // Gami earnUSDC
-  "CC6TRAPQD3NK7THUKWPV5SL2JHKQGNXZVB6S6MVYFSLRWAKEFUWZKZ7J", // Gami earnXLM
-];
+// Stellar (Soroban) vaults — tokenized vaults (OZ FungibleVault), listed by the
+// API under chain -3. total_assets() = idle balance + strategy balances + deployed
+// capital; query_asset() returns the underlying token's Soroban contract address,
+// which DefiLlama prices directly (the USDC/XLM SACs are already in coreAssets).
+const STELLAR_CHAIN_ID = -3;
 
 // V1 vault types (ERC4626 compatible)
 const v1VaultTypes = ['tokenizedVault', 'lendingPool'];
@@ -67,6 +64,9 @@ async function getVaultsConfig() {
   for (const vault of vaults) {
     // Filter out vaults where is_visible is false
     if (vault.status !== "active") continue;
+    // Wrapper vaults deposit into another Upshift vault (underlying_vault_address),
+    // so their assets are already counted in that underlying vault's TVL.
+    if (vault.underlying_vault_address) continue;
     
     const chainName = chainIdToName[vault.chain];
     if (!chainName) continue; // Skip unsupported chains
@@ -102,7 +102,7 @@ async function sumV2Vaults(api, vaults) {
 const solanaVaultsTvl = async (api) => {
   const vaults = await getConfig('upshift/vaults', vaultsApiEndpoint);
   const addresses = vaults
-    .filter(v => v.status === 'active' && v.chain === SOLANA_CHAIN_ID)
+    .filter(v => v.status === 'active' && v.chain === SOLANA_CHAIN_ID && !v.underlying_vault_address)
     .map(v => v.address);
   if (!addresses.length) return;
 
@@ -133,7 +133,16 @@ const suiVaultsTvl = async (api) => {
 }
 
 const stellarVaultsTvl = async (api) => {
-  for (const vault of stellarVaultsToInclude) {
+  const vaults = await getConfig('upshift/vaults', vaultsApiEndpoint);
+  // getConfig falls back to the cache on fetch failure, and a cache miss yields {}.
+  // Throw instead of reporting zero Stellar TVL.
+  if (!Array.isArray(vaults)) throw new Error('upshift: vault list unavailable');
+  const addresses = vaults
+    .filter(v => v.status === 'active' && v.chain === STELLAR_CHAIN_ID && !v.underlying_vault_address)
+    .filter(v => !/staging/i.test(v.vault_name ?? ''))
+    .map(v => v.address);
+
+  for (const vault of addresses) {
     const asset = await callSoroban(vault, 'query_asset')
     const totalAssets = await callSoroban(vault, 'total_assets')
     api.add(asset, totalAssets.toString())

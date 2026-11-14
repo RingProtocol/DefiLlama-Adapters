@@ -80,7 +80,7 @@ const aaveV2Configs = {
   'bonzo': {
     timetravel: false,
     methodology,
-    hedera: '0x236897c518996163E7b313aD21D1C9fCC7BA1afc',
+    hedera: { registry: '0x236897c518996163E7b313aD21D1C9fCC7BA1afc', isInsolvent: true },
   },
   'takoTako': {
     methodology,
@@ -535,6 +535,7 @@ const aaveConfigs = {
   },
   'k613': {
     monad: {
+      v3: true,
       dataHelpers: ['0xfc87bE7f3657AAD69baDb6247A88E924D1F8bc53'],
     },
   },
